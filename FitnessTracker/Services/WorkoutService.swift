@@ -6,134 +6,159 @@
 //
 
 import Foundation
+import Combine
 
 class WorkoutService: ObservableObject {
-    // Update this to match your deployed web app URL
-    private let baseURL = "https://fitness-tracker-q1z4d0okx-rob-whiteleys-projects.vercel.app"
+    @Published var workouts: [Workout] = []
+    @Published var isSyncing = false
+    @Published var lastSyncDate: Date?
+    @Published var syncError: String?
     
-    private let session = URLSession.shared
+    private let baseURL = "https://fitness-tracker-carryologist.vercel.app/api"
+    private var cancellables = Set<AnyCancellable>()
     
-    func syncWorkout(_ workout: Workout) async throws {
-        guard let url = URL(string: "\(baseURL)/api/workouts") else {
-            throw WorkoutServiceError.invalidURL
+    init() {
+        loadLastSyncDate()
+    }
+    
+    // Sync workouts to the web API
+    func syncWorkouts(_ workouts: [Workout]) async throws {
+        guard !workouts.isEmpty else { return }
+        
+        DispatchQueue.main.async {
+            self.isSyncing = true
+            self.syncError = nil
         }
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Convert our Workout model to the format expected by your web API
-        let apiWorkout = APIWorkout(
-            date: ISO8601DateFormatter().string(from: workout.date),
-            source: workout.source,
-            activity: workout.activity,
-            minutes: workout.minutes,
-            miles: workout.miles,
-            weightLifted: workout.weightLifted,
-            notes: workout.notes
-        )
-        
         do {
-            let jsonData = try JSONEncoder().encode(apiWorkout)
-            request.httpBody = jsonData
+            // Prepare the request
+            guard let url = URL(string: "\(baseURL)/workouts") else {
+                throw WorkoutServiceError.invalidURL
+            }
             
-            let (data, response) = try await session.data(for: request)
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            // Convert workouts to JSON
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            
+            // Create payload matching web app structure
+            let payload = workouts.map { workout in
+                WorkoutPayload(
+                    date: workout.date,
+                    source: workout.source,
+                    activity: workout.activity,
+                    minutes: Int(workout.minutes),  // Convert to Int for API
+                    miles: workout.miles,
+                    weight: workout.weight,  // Now using 'weight' field
+                    calories: workout.calories
+                )
+            }
+            
+            request.httpBody = try encoder.encode(["workouts": payload])
+            
+            // Send the request
+            let (data, response) = try await URLSession.shared.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw WorkoutServiceError.invalidResponse
             }
             
-            if httpResponse.statusCode == 201 {
-                print("✅ Workout synced successfully: \(workout.activity) on \(workout.date)")
-            } else if httpResponse.statusCode == 409 {
-                // Workout already exists - this is fine
-                print("ℹ️ Workout already exists: \(workout.activity) on \(workout.date)")
+            if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
+                // Success - update last sync date
+                DispatchQueue.main.async {
+                    self.lastSyncDate = Date()
+                    self.saveLastSyncDate()
+                    self.isSyncing = false
+                    print("Successfully synced \(workouts.count) workouts")
+                }
             } else {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                throw WorkoutServiceError.serverError(httpResponse.statusCode, errorMessage)
+                // Try to parse error message
+                if let errorData = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                    throw WorkoutServiceError.apiError(errorData.error)
+                } else {
+                    throw WorkoutServiceError.httpError(httpResponse.statusCode)
+                }
             }
-        } catch let error as WorkoutServiceError {
-            throw error
         } catch {
-            throw WorkoutServiceError.networkError(error)
+            DispatchQueue.main.async {
+                self.isSyncing = false
+                self.syncError = error.localizedDescription
+                print("Sync error: \(error)")
+            }
+            throw error
         }
     }
     
-    func fetchWorkouts() async throws -> [Workout] {
-        guard let url = URL(string: "\(baseURL)/api/workouts") else {
+    // Fetch workouts from the web API
+    func fetchWorkouts() async throws {
+        guard let url = URL(string: "\(baseURL)/workouts") else {
             throw WorkoutServiceError.invalidURL
         }
         
-        do {
-            let (data, response) = try await session.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw WorkoutServiceError.invalidResponse
-            }
-            
-            let apiResponse = try JSONDecoder().decode(APIWorkoutsResponse.self, from: data)
-            
-            // Convert API workouts back to our Workout model
-            let workouts = apiResponse.workouts.map { apiWorkout in
-                Workout(
-                    id: UUID().uuidString, // Generate new ID for API workouts
-                    date: ISO8601DateFormatter().date(from: apiWorkout.date) ?? Date(),
-                    source: apiWorkout.source,
-                    activity: apiWorkout.activity,
-                    minutes: apiWorkout.minutes,
-                    miles: apiWorkout.miles,
-                    weightLifted: apiWorkout.weightLifted,
-                    notes: apiWorkout.notes
-                )
-            }
-            
-            return workouts
-        } catch let error as WorkoutServiceError {
-            throw error
-        } catch {
-            throw WorkoutServiceError.networkError(error)
+        let (data, response) = try await URLSession.shared.data(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw WorkoutServiceError.invalidResponse
         }
+        
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
+        let fetchedWorkouts = try decoder.decode([Workout].self, from: data)
+        
+        DispatchQueue.main.async {
+            self.workouts = fetchedWorkouts
+        }
+    }
+    
+    // Save last sync date to UserDefaults
+    private func saveLastSyncDate() {
+        UserDefaults.standard.set(lastSyncDate, forKey: "lastWorkoutSyncDate")
+    }
+    
+    // Load last sync date from UserDefaults
+    private func loadLastSyncDate() {
+        lastSyncDate = UserDefaults.standard.object(forKey: "lastWorkoutSyncDate") as? Date
     }
 }
 
-// MARK: - API Models
-
-struct APIWorkout: Codable {
-    let date: String
+// Payload structure for API
+struct WorkoutPayload: Codable {
+    let date: Date
     let source: String
     let activity: String
     let minutes: Int
     let miles: Double?
-    let weightLifted: Double?
-    let notes: String?
+    let weight: Double?  // Changed from weightLifted
+    let calories: Double?
 }
 
-struct APIWorkoutsResponse: Codable {
-    let workouts: [APIWorkout]
+// Error response from API
+struct ErrorResponse: Codable {
+    let error: String
 }
 
-// MARK: - Error Types
-
+// Custom errors
 enum WorkoutServiceError: Error, LocalizedError {
     case invalidURL
     case invalidResponse
-    case serverError(Int, String)
-    case networkError(Error)
-    case decodingError(Error)
+    case apiError(String)
+    case httpError(Int)
     
     var errorDescription: String? {
         switch self {
         case .invalidURL:
             return "Invalid API URL"
         case .invalidResponse:
-            return "Invalid server response"
-        case .serverError(let code, let message):
-            return "Server error (\(code)): \(message)"
-        case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
-        case .decodingError(let error):
-            return "Data decoding error: \(error.localizedDescription)"
+            return "Invalid response from server"
+        case .apiError(let message):
+            return "API Error: \(message)"
+        case .httpError(let code):
+            return "HTTP Error: \(code)"
         }
     }
 }

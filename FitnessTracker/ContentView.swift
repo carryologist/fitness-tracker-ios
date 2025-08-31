@@ -9,188 +9,271 @@ import SwiftUI
 import HealthKit
 
 struct ContentView: View {
-    @EnvironmentObject var healthKitManager: HealthKitManager
+    @StateObject private var healthKitManager = HealthKitManager()
     @StateObject private var workoutService = WorkoutService()
-    @State private var workouts: [Workout] = []
-    @State private var isLoading = false
-    @State private var lastSyncDate: Date?
+    
+    @State private var recentWorkouts: [Workout] = []
+    @State private var isSyncing = false
+    @State private var syncMessage = ""
+    @State private var showingSyncAlert = false
     
     var body: some View {
         NavigationView {
             VStack {
-                // Sync Status
-                HStack {
-                    Image(systemName: healthKitManager.isAuthorized ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundColor(healthKitManager.isAuthorized ? .green : .orange)
-                    
-                    Text(healthKitManager.isAuthorized ? "Connected to Apple Health" : "Apple Health Access Needed")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    if let lastSync = lastSyncDate {
-                        Text("Last sync: \(lastSync, style: .time)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.top, 8)
-                
-                // Sync Button
-                Button(action: syncWorkouts) {
+                // Sync Status Card
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        if isLoading {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
+                        Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                        
+                        VStack(alignment: .leading) {
+                            Text("Sync Status")
+                                .font(.headline)
+                            if let lastSync = workoutService.lastSyncDate {
+                                Text("Last synced: \(lastSync, formatter: relativeDateFormatter)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("Never synced")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        Text(isLoading ? "Syncing..." : "Sync Workouts")
+                        
+                        Spacer()
+                        
+                        Button(action: syncWorkouts) {
+                            if isSyncing {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle())
+                                    .scaleEffect(0.8)
+                            } else {
+                                Text("Sync Now")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue)
+                                    .cornerRadius(8)
+                            }
+                        }
+                        .disabled(isSyncing || !healthKitManager.isAuthorized)
                     }
-                    .foregroundColor(.white)
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 24)
-                    .background(Color.blue)
-                    .cornerRadius(8)
+                    
+                    if !healthKitManager.isAuthorized {
+                        Text("⚠️ HealthKit access required")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
                 }
-                .disabled(isLoading || !healthKitManager.isAuthorized)
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
                 .padding(.horizontal)
                 
-                // Workout List
-                if workouts.isEmpty {
+                // Workouts List
+                if recentWorkouts.isEmpty {
+                    Spacer()
                     VStack(spacing: 16) {
-                        Image(systemName: "figure.run")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary)
+                        Image(systemName: "figure.run.circle")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
                         
-                        Text("No workouts found")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
+                        Text("No Recent Workouts")
+                            .font(.title2)
+                            .fontWeight(.semibold)
                         
-                        Text(healthKitManager.isAuthorized ? 
-                             "Complete a Peloton or Tonal workout, then tap 'Sync Workouts' to see your data here." :
-                             "Grant Apple Health access to sync your workouts.")
+                        Text(healthKitManager.isAuthorized ?
+                             "Complete a workout to see your data here." :
+                             "Grant HealthKit access to see your workouts.")
                             .font(.body)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal)
+                            .padding(.horizontal, 40)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Spacer()
                 } else {
-                    List(workouts) { workout in
-                        WorkoutRowView(workout: workout)
+                    List(recentWorkouts) { workout in
+                        WorkoutRow(workout: workout)
                     }
+                    .listStyle(InsetGroupedListStyle())
                 }
             }
             .navigationTitle("Fitness Tracker")
-            .refreshable {
-                await syncWorkoutsAsync()
+            .onAppear {
+                loadWorkouts()
             }
+            .alert("Sync Complete", isPresented: $showingSyncAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(syncMessage)
+            }
+        }
+    }
+    
+    private func loadWorkouts() {
+        healthKitManager.fetchRecentWorkouts { workouts in
+            self.recentWorkouts = workouts
         }
     }
     
     private func syncWorkouts() {
-        Task {
-            await syncWorkoutsAsync()
-        }
-    }
-    
-    private func syncWorkoutsAsync() async {
-        guard healthKitManager.isAuthorized else { return }
+        isSyncing = true
         
-        await MainActor.run {
-            isLoading = true
-        }
-        
-        do {
-            // Fetch workouts from HealthKit
-            let healthKitWorkouts = try await healthKitManager.fetchRecentWorkouts()
-            
-            // Convert to our Workout model
-            let convertedWorkouts = healthKitWorkouts.map { hkWorkout in
-                Workout.fromHealthKitWorkout(hkWorkout)
+        // Fetch unsynced workouts from HealthKit
+        healthKitManager.fetchUnsyncedWorkouts(lastSyncDate: workoutService.lastSyncDate) { workouts in
+            if workouts.isEmpty {
+                self.syncMessage = "No new workouts to sync"
+                self.showingSyncAlert = true
+                self.isSyncing = false
+                return
             }
             
             // Sync to web API
-            for workout in convertedWorkouts {
-                try await workoutService.syncWorkout(workout)
-            }
-            
-            await MainActor.run {
-                workouts = convertedWorkouts.sorted { $0.date > $1.date }
-                lastSyncDate = Date()
-                isLoading = false
-            }
-        } catch {
-            print("Error syncing workouts: \(error)")
-            await MainActor.run {
-                isLoading = false
+            Task {
+                do {
+                    try await workoutService.syncWorkouts(workouts)
+                    await MainActor.run {
+                        self.syncMessage = "Successfully synced \(workouts.count) workout(s)"
+                        self.showingSyncAlert = true
+                        self.isSyncing = false
+                        self.loadWorkouts() // Reload to show updated list
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.syncMessage = "Sync failed: \(error.localizedDescription)"
+                        self.showingSyncAlert = true
+                        self.isSyncing = false
+                    }
+                }
             }
         }
     }
 }
 
-struct WorkoutRowView: View {
+struct WorkoutRow: View {
     let workout: Workout
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                // Activity Icon
-                Image(systemName: workout.activityIcon)
-                    .foregroundColor(workout.activityColor)
-                    .font(.title2)
-                
-                VStack(alignment: .leading, spacing: 2) {
+        HStack {
+            // Activity Icon
+            Image(systemName: activityIcon)
+                .font(.title2)
+                .foregroundColor(activityColor)
+                .frame(width: 40)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
                     Text(workout.activity)
                         .font(.headline)
-                    
-                    Text(workout.source)
+                    Text("• \(workout.source)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(workout.minutes) min")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    
-                    Text(workout.date, style: .date)
+                HStack(spacing: 12) {
+                    // Duration
+                    Label("\(Int(workout.minutes)) min", systemImage: "clock")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    
+                    // Distance/Miles
+                    if let miles = workout.miles {
+                        Label(String(format: "%.1f mi", miles), systemImage: "location")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Weight
+                    if let weight = workout.weight {
+                        Label(formatWeight(weight), systemImage: "scalemass")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Calories
+                    if let calories = workout.calories {
+                        Label("\(Int(calories)) cal", systemImage: "flame")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
+                
+                Text(workout.date, formatter: workoutDateFormatter)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
             
-            // Additional metrics
-            HStack(spacing: 16) {
-                if let miles = workout.miles, miles > 0 {
-                    Label("\(miles, specifier: "%.1f") mi", systemImage: "location")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                if let weight = workout.weightLifted, weight > 0 {
-                    Label("\(Int(weight)) lbs", systemImage: "dumbbell")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                if let calories = workout.calories, calories > 0 {
-                    Label("\(Int(calories)) cal", systemImage: "flame")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
+            Spacer()
         }
         .padding(.vertical, 4)
     }
+    
+    private var activityIcon: String {
+        switch workout.activity {
+        case "Cycling", "Outdoor cycling":
+            return "bicycle"
+        case "Running":
+            return "figure.run"
+        case "Walking":
+            return "figure.walk"
+        case "Weight lifting":
+            return "dumbbell.fill"
+        case "Yoga":
+            return "figure.yoga"
+        case "Swimming":
+            return "figure.pool.swim"
+        default:
+            return "figure.mixed.cardio"
+        }
+    }
+    
+    private var activityColor: Color {
+        switch workout.activity {
+        case "Cycling", "Outdoor cycling":
+            return .blue
+        case "Running":
+            return .red
+        case "Walking":
+            return .green
+        case "Weight lifting":
+            return .orange
+        case "Yoga":
+            return .purple
+        case "Swimming":
+            return .cyan
+        default:
+            return .gray
+        }
+    }
+    
+    private func formatWeight(_ weight: Double) -> String {
+        if weight >= 1000 {
+            return String(format: "%.0fk lbs", weight / 1000)
+        } else {
+            return String(format: "%.0f lbs", weight)
+        }
+    }
 }
 
-#Preview {
-    ContentView()
-        .environmentObject(HealthKitManager())
+// Date Formatters
+let workoutDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+}()
+
+let relativeDateFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter
+}()
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 }

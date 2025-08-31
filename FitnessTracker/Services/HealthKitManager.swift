@@ -7,177 +7,181 @@
 
 import Foundation
 import HealthKit
-import Combine
 
 class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore()
-    
     @Published var isAuthorized = false
-    @Published var authorizationStatus: HKAuthorizationStatus = .notDetermined
-    
-    // HealthKit data types we want to read
-    private let readTypes: Set<HKObjectType> = [
-        HKObjectType.workoutType(),
-        HKObjectType.quantityType(forIdentifier: .heartRate)!,
-        HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
-        HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!,
-        HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
-        HKObjectType.quantityType(forIdentifier: .stepCount)!,
-    ]
     
     init() {
-        checkAuthorizationStatus()
+        checkAuthorization()
     }
     
-    func requestAuthorization() {
+    func checkAuthorization() {
         guard HKHealthStore.isHealthDataAvailable() else {
             print("HealthKit is not available on this device")
             return
         }
         
-        healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] success, error in
+        let typesToRead: Set<HKObjectType> = [
+            HKObjectType.workoutType(),
+            HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!,
+            HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
+            HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
+            HKObjectType.quantityType(forIdentifier: .heartRate)!,
+            HKObjectType.quantityType(forIdentifier: .bodyMass)!  // For weight tracking
+        ]
+        
+        healthStore.requestAuthorization(toShare: nil, read: typesToRead) { [weak self] success, error in
             DispatchQueue.main.async {
+                self?.isAuthorized = success
                 if let error = error {
                     print("HealthKit authorization error: \(error.localizedDescription)")
-                    return
                 }
-                
-                self?.checkAuthorizationStatus()
             }
         }
     }
     
-    private func checkAuthorizationStatus() {
+    func fetchRecentWorkouts(completion: @escaping ([Workout]) -> Void) {
         let workoutType = HKObjectType.workoutType()
-        authorizationStatus = healthStore.authorizationStatus(for: workoutType)
-        isAuthorized = authorizationStatus == .sharingAuthorized
-    }
-    
-    func fetchRecentWorkouts(days: Int = 30) async throws -> [HKWorkout] {
-        guard isAuthorized else {
-            throw HealthKitError.notAuthorized
-        }
+        let endDate = Date()
+        let startDate = Calendar.current.date(byAdding: .day, value: -30, to: endDate)!
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         
-        let workoutType = HKObjectType.workoutType()
-        let startDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: Date(), options: .strictStartDate)
-        
-        // Sort by start date, most recent first
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
         
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: workoutType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [sortDescriptor]
-            ) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                
-                let workouts = samples as? [HKWorkout] ?? []
-                continuation.resume(returning: workouts)
-            }
-            
-            healthStore.execute(query)
-        }
-    }
-    
-    func fetchWorkoutDetails(for workout: HKWorkout) async throws -> WorkoutDetails {
-        // Fetch heart rate data for this workout
-        let heartRateData = try await fetchHeartRateData(for: workout)
-        
-        return WorkoutDetails(
-            workout: workout,
-            heartRateAverage: heartRateData.average,
-            heartRateMax: heartRateData.max,
-            heartRateMin: heartRateData.min
-        )
-    }
-    
-    private func fetchHeartRateData(for workout: HKWorkout) async throws -> (average: Double?, max: Double?, min: Double?) {
-        guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
-            return (nil, nil, nil)
-        }
-        
-        let predicate = HKQuery.predicateForSamples(
-            withStart: workout.startDate,
-            end: workout.endDate,
-            options: .strictStartDate
-        )
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: heartRateType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
-            ) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                
-                guard let heartRateSamples = samples as? [HKQuantitySample], !heartRateSamples.isEmpty else {
-                    continuation.resume(returning: (nil, nil, nil))
-                    return
-                }
-                
-                let heartRates = heartRateSamples.map { sample in
-                    sample.quantity.doubleValue(for: HKUnit(from: "count/min"))
-                }
-                
-                let average = heartRates.reduce(0, +) / Double(heartRates.count)
-                let max = heartRates.max()
-                let min = heartRates.min()
-                
-                continuation.resume(returning: (average, max, min))
-            }
-            
-            healthStore.execute(query)
-        }
-    }
-    
-    // Enable background delivery for workout updates
-    func enableBackgroundDelivery() {
-        guard isAuthorized else { return }
-        
-        let workoutType = HKObjectType.workoutType()
-        
-        healthStore.enableBackgroundDelivery(for: workoutType, frequency: .immediate) { success, error in
+        let query = HKSampleQuery(sampleType: workoutType, predicate: predicate, limit: 100, sortDescriptors: [sortDescriptor]) { [weak self] _, samples, error in
             if let error = error {
-                print("Failed to enable background delivery: \(error.localizedDescription)")
-            } else if success {
-                print("Background delivery enabled for workouts")
+                print("Error fetching workouts: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion([])
+                }
+                return
+            }
+            
+            guard let workouts = samples as? [HKWorkout] else {
+                DispatchQueue.main.async {
+                    completion([])
+                }
+                return
+            }
+            
+            // Convert HKWorkouts to our Workout model
+            let convertedWorkouts = workouts.compactMap { hkWorkout -> Workout? in
+                self?.convertHealthKitWorkout(hkWorkout)
+            }
+            
+            DispatchQueue.main.async {
+                completion(convertedWorkouts)
             }
         }
+        
+        healthStore.execute(query)
     }
-}
-
-// MARK: - Supporting Types
-
-struct WorkoutDetails {
-    let workout: HKWorkout
-    let heartRateAverage: Double?
-    let heartRateMax: Double?
-    let heartRateMin: Double?
-}
-
-enum HealthKitError: Error, LocalizedError {
-    case notAuthorized
-    case dataNotAvailable
-    case queryFailed(String)
     
-    var errorDescription: String? {
-        switch self {
-        case .notAuthorized:
-            return "HealthKit access not authorized"
-        case .dataNotAvailable:
-            return "HealthKit data not available on this device"
-        case .queryFailed(let message):
-            return "HealthKit query failed: \(message)"
+    private func convertHealthKitWorkout(_ hkWorkout: HKWorkout) -> Workout? {
+        let sourceName = hkWorkout.sourceRevision.source.name
+        let source = WorkoutMapping.determineSource(from: sourceName)
+        
+        // Skip workouts from unknown sources if needed
+        // For now, we'll include all as "Other"
+        
+        let activity = WorkoutMapping.mapHealthKitActivity(hkWorkout.workoutActivityType, source: source)
+        let minutes = hkWorkout.duration / 60.0
+        
+        // Extract distance and convert to miles
+        var miles: Double?
+        if let distanceQuantity = hkWorkout.totalDistance {
+            let meters = distanceQuantity.doubleValue(for: .meter())
+            miles = WorkoutMapping.metersToMiles(meters)
         }
+        
+        // Extract calories
+        var calories: Double?
+        if let energyQuantity = hkWorkout.totalEnergyBurned {
+            calories = energyQuantity.doubleValue(for: .kilocalorie())
+        }
+        
+        // Extract weight lifted for strength training
+        var weight: Double?
+        if activity == "Weight lifting" {
+            // For Tonal workouts, weight data might be in metadata
+            if let metadata = hkWorkout.metadata {
+                // Check for custom weight lifted key (some apps store this)
+                if let weightLifted = metadata["HKMetadataKeyWeightLifted"] as? Double {
+                    weight = weightLifted
+                } else if let totalWeight = metadata["total_weight"] as? Double {
+                    weight = totalWeight
+                } else if source == "Tonal" {
+                    // Tonal typically stores weight in a specific format
+                    // Estimate based on workout duration and calories if no direct data
+                    if let cal = calories {
+                        // More sophisticated calculation for Tonal
+                        // Assuming ~100 calories per 1000 lbs lifted (rough estimate)
+                        weight = cal * 10
+                    }
+                } else {
+                    // For other strength workouts, use a general estimate
+                    if let cal = calories {
+                        // General gym estimate: ~50 calories per 1000 lbs
+                        weight = cal * 20
+                    }
+                }
+            }
+        }
+        
+        return Workout(
+            date: hkWorkout.startDate,
+            source: source,
+            activity: activity,
+            minutes: minutes,
+            miles: miles,
+            weight: weight,
+            calories: calories
+        )
+    }
+    
+    // Fetch workouts that haven't been synced yet
+    func fetchUnsyncedWorkouts(lastSyncDate: Date?, completion: @escaping ([Workout]) -> Void) {
+        let workoutType = HKObjectType.workoutType()
+        let endDate = Date()
+        let startDate = lastSyncDate ?? Calendar.current.date(byAdding: .day, value: -7, to: endDate)!
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        
+        let query = HKSampleQuery(sampleType: workoutType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sortDescriptor]) { [weak self] _, samples, error in
+            if let error = error {
+                print("Error fetching unsynced workouts: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion([])
+                }
+                return
+            }
+            
+            guard let workouts = samples as? [HKWorkout] else {
+                DispatchQueue.main.async {
+                    completion([])
+                }
+                return
+            }
+            
+            // Filter and convert workouts
+            let convertedWorkouts = workouts.compactMap { hkWorkout -> Workout? in
+                // Only include workouts from supported sources
+                let sourceName = hkWorkout.sourceRevision.source.name
+                let source = WorkoutMapping.determineSource(from: sourceName)
+                
+                // Convert the workout
+                return self?.convertHealthKitWorkout(hkWorkout)
+            }
+            
+            DispatchQueue.main.async {
+                completion(convertedWorkouts)
+            }
+        }
+        
+        healthStore.execute(query)
     }
 }
+
+// ... existing code ...

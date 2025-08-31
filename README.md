@@ -1,185 +1,174 @@
-# Fitness Tracker iOS App
+# Fitness Tracker iOS
 
-🏋️‍♂️ **Native iOS companion app for the Fitness Tracker web application**
+🏋️‍♂️ A native iOS app that syncs your workouts from Apple Health to your fitness tracker web app.
 
-This iOS app automatically syncs your Peloton and Tonal workouts from Apple Health to your fitness tracker web app, giving you seamless cross-device access to your workout data.
+## Overview
 
-## ✨ Features
+This iOS app automatically syncs your workouts from Apple Health to your fitness tracker web app, giving you seamless cross-device access to your workout data.
 
-- 📱 **Native iOS app** with SwiftUI interface
-- 🍎 **Apple Health integration** - reads workout data from HealthKit
-- 🔄 **Automatic sync** with your web app database
-- 🚴‍♂️ **Peloton support** - cycling, running, strength, yoga, etc.
-- 💪 **Tonal support** - strength training workouts
-- 📊 **Rich workout data** - heart rate, calories, distance, duration
-- 🎯 **Cross-device editing** - create goals on web, view on mobile
+## Features
 
-## 🚀 Quick Start
+- 🎨 **Apple Health Integration** - Automatically reads workout data from HealthKit
+- 🚀 **Automatic Sync** - Push workouts to your web app with one tap
+- 📊 **Comprehensive Data** - Tracks duration, distance, calories, and weight lifted
+- 🔄 **Smart Sync** - Only syncs new workouts since last sync
+- 🌐 **Web App Integration** - Seamlessly works with your Vercel-deployed fitness tracker
+
+## Supported Sources
+
+- 🚴‍♂️ **Peloton** - Cycling, running, strength, yoga, walking
+- 💪 **Tonal** - Strength training with weight tracking
+- 🚵 **Cannondale** - Outdoor cycling
+- 🏋️ **Gym** - Weight lifting, running, swimming
+- ✨ **Other** - Any other fitness app that syncs to Apple Health
+
+## Supported Activities
+
+- 🚴‍♂️ **Cycling** (Indoor)
+- 🚵 **Outdoor Cycling**
+- 🏃‍♂️ **Running**
+- 🚶‍♂️ **Walking**
+- 💪 **Weight Lifting** (with weight tracking)
+- 🧘‍♀️ **Yoga**
+- 🏊‍♂️ **Swimming**
+- ✨ **Other** (General workouts)
+
+## Data Tracked
+
+- **Duration** - Workout time in minutes
+- **Distance** - Automatically converted to miles
+- **Weight Lifted** - Total weight for strength workouts (lbs)
+- **Calories** - Energy burned
+- **Source App** - Automatically detected (Peloton, Tonal, Cannondale, Gym, etc.)
+- **Activity Type** - Mapped to match web app categories
+
+## How It Works
+
+```
+Workout App → Apple Health → iOS App → Web App Database → Web App
+```
+
+1. **Complete a workout** on any supported app
+2. **Workout syncs** to Apple Health automatically
+3. **Open this iOS app** and tap "Sync Now"
+4. **View your data** on the web app with charts and insights
+
+## Setup
 
 ### Prerequisites
 
-- **Mac computer** (required for iOS development)
-- **Xcode 15.0+** (free from Mac App Store)
-- **iPhone** running iOS 17.0+ (for testing with real HealthKit data)
-- **Apple ID** (free developer account)
-- **Peloton and/or Tonal** workouts syncing to Apple Health
+- iOS 14.0 or later
+- Xcode 13.0 or later
+- Apple Health app with workout data
+- Fitness apps syncing to Apple Health
 
-### Setup Instructions
+### Installation
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/carryologist/fitness-tracker-ios.git
-   cd fitness-tracker-ios
+1. Clone this repository
+2. Open `FitnessTracker.xcodeproj` in Xcode
+3. Update the API URL in `WorkoutService.swift` if needed:
+   ```swift
+   private let baseURL = "https://fitness-tracker-carryologist.vercel.app/api"
    ```
+4. Build and run on your device (simulator won't have HealthKit data)
 
-2. **Open in Xcode:**
-   ```bash
-   open FitnessTracker.xcodeproj
-   ```
+### HealthKit Permissions
 
-3. **Configure your Apple ID:**
-   - In Xcode, go to **Preferences** → **Accounts**
-   - Add your Apple ID if not already added
-   - Select your development team
+The app will request permission to read:
+- Workouts
+- Active Energy Burned
+- Distance (Walking/Running/Cycling)
+- Heart Rate
+- Body Mass (for weight tracking context)
 
-4. **Update Bundle Identifier:**
-   - Select the **FitnessTracker** project in Xcode
-   - Go to **Signing & Capabilities**
-   - Change the Bundle Identifier to something unique (e.g., `com.yourname.FitnessTracker`)
+## Usage
 
-5. **Connect your iPhone:**
-   - Connect your iPhone to your Mac via USB
-   - Trust the computer on your iPhone if prompted
-   - Select your iPhone as the build destination in Xcode
+1. **Grant HealthKit Access** - Allow the app to read your workout data
+2. **View Recent Workouts** - See your last 30 days of workouts
+3. **Tap "Sync Now"** - Send new workouts to your web app
+4. **Check Sync Status** - See when you last synced
 
-6. **Build and Run:**
-   - Press **⌘+R** or click the **Play** button in Xcode
-   - The app will install and launch on your iPhone
+## Smart Features
 
-7. **Trust the Developer:**
-   - On your iPhone, go to **Settings** → **General** → **VPN & Device Management**
-   - Find your Apple ID under "Developer App"
-   - Tap **Trust** and confirm
+### Intelligent Source Detection
+The app automatically identifies workout sources:
+- Peloton workouts → "Peloton"
+- Tonal workouts → "Tonal"
+- Cannondale rides → "Cannondale"
+- Gym apps → "Gym"
+- Everything else → "Other"
 
-8. **Grant HealthKit Permissions:**
-   - Open the app on your iPhone
-   - Tap **Allow** when prompted for Apple Health access
-   - Enable the workout data types you want to sync
+### Activity Mapping
+HealthKit workout types are intelligently mapped to web app activities:
+- Functional/Traditional Strength Training → "Weight lifting"
+- Mixed Cardio from Cannondale → "Outdoor cycling"
+- All activities filtered based on source for accuracy
 
-## 📱 How It Works
+### Weight Lifted Estimation
+For strength workouts:
+- Checks for direct weight data in workout metadata
+- Tonal workouts: Enhanced calculation based on workout patterns
+- General gym workouts: Estimates based on calories and duration
 
-### Data Flow
-```
-Peloton/Tonal Workout → Apple Health → iOS App → Web App Database → Web App
-```
+### Unit Conversion
+- Distance automatically converted from meters to miles
+- Weight displayed in pounds (lbs)
+- Smart formatting for large numbers (e.g., "10k lbs")
 
-### Sync Process
-1. **Complete a workout** on Peloton or Tonal
-2. **Workout automatically syncs** to Apple Health
-3. **Open the iOS app** and tap "Sync Workouts"
-4. **App reads workout data** from HealthKit
-5. **Data syncs to your web app** database
-6. **View and edit** on any device (web, mobile)
+## API Integration
 
-## 🛠️ Configuration
+The app syncs with your web app's API endpoints:
 
-### API Endpoint
-The app is configured to sync with your deployed web app. Update the API endpoint in `WorkoutService.swift`:
+- `POST /api/workouts` - Batch sync multiple workouts
+- Sends data in the format:
+  ```json
+  {
+    "workouts": [
+      {
+        "date": "2024-01-20T10:30:00Z",
+        "source": "Peloton",
+        "activity": "Cycling",
+        "minutes": 30,
+        "miles": 8.5,
+        "weight": null,
+        "calories": 250
+      }
+    ]
+  }
+  ```
 
-```swift
-private let baseURL = "https://your-fitness-tracker-url.vercel.app"
-```
+## Troubleshooting
 
-### Supported Workout Types
-- 🚴‍♂️ **Cycling** (Peloton Bike/Bike+)
-- 🏃‍♂️ **Running** (Peloton Tread)
-- 💪 **Strength Training** (Tonal, Peloton)
-- 🧘‍♀️ **Yoga** (Peloton)
-- 🚣‍♂️ **Rowing** (Peloton Row)
-- 🏊‍♂️ **Swimming** (Apple Watch)
-- 🥾 **Hiking** (Apple Watch)
-- And more...
+### No workouts showing?
+- Ensure your fitness apps are syncing to Apple Health
+- Check HealthKit permissions in Settings > Privacy > Health
+- Complete a workout and wait for it to sync to Health
 
-## 📊 Data Synced
+### Sync failing?
+- Verify your web app is deployed and accessible
+- Check the API URL in `WorkoutService.swift`
+- Ensure you have internet connectivity
 
-### From Apple Health:
-- **Workout Type** (cycling, running, strength, etc.)
-- **Duration** (minutes)
-- **Calories Burned**
-- **Distance** (for cardio workouts)
-- **Heart Rate** (average/max)
-- **Source App** (Peloton, Tonal, etc.)
-- **Date & Time**
+### Weight data missing?
+- Not all apps provide weight data to HealthKit
+- Tonal should include weight data automatically
+- Manual gym workouts may need weight entered in the source app
 
-### To Web App:
-- All workout data formatted for your existing database
-- Automatic deduplication (won't create duplicates)
-- Seamless integration with your web app's goal tracking
+## Privacy
 
-## 🔧 Development
+- All data stays between your device and your personal web app
+- No third-party services involved
+- HealthKit data is only read, never modified
+- Sync history stored locally on device
 
-### Project Structure
-```
-FitnessTracker/
-├── FitnessTrackerApp.swift    # Main app entry point
-├── ContentView.swift          # Main UI with workout list
-├── Models/
-│   └── Workout.swift          # Workout data model
-├── Services/
-│   ├── HealthKitManager.swift # HealthKit integration
-│   └── WorkoutService.swift   # API sync service
-└── Assets.xcassets           # App icons and colors
-```
+## Contributing
 
-### Key Components
+Feel free to submit issues and enhancement requests!
 
-- **HealthKitManager**: Handles Apple Health permissions and data reading
-- **WorkoutService**: Syncs workout data with your web app API
-- **Workout Model**: Converts between HealthKit and your web app format
-- **ContentView**: Main UI with workout list and sync functionality
+## License
 
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**"No workouts found"**
-- Ensure Peloton/Tonal apps are syncing to Apple Health
-- Check Apple Health permissions in iOS Settings
-- Complete a test workout and wait a few minutes
-
-**"Apple Health Access Needed"**
-- Tap the message and grant permissions
-- Go to iOS Settings → Privacy & Security → Health → FitnessTracker
-- Enable all workout-related permissions
-
-**Sync failures**
-- Check your internet connection
-- Verify the API endpoint URL in `WorkoutService.swift`
-- Ensure your web app is deployed and accessible
-
-**Build errors in Xcode**
-- Update to latest Xcode version
-- Clean build folder (Product → Clean Build Folder)
-- Check Bundle Identifier is unique
-- Verify Apple ID is signed in
-
-## 🔮 Future Features
-
-- 📱 **Apple Watch companion app**
-- 🔔 **Push notifications** for workout sync
-- 📈 **Native charts** and analytics
-- ⚡ **Background sync** (automatic)
-- 🎯 **Quick goal creation** on mobile
-- 📱 **Today widget** with stats
-
-## 🤝 Contributing
-
-This is a companion app for the main fitness tracker web application. For issues or feature requests, please coordinate with the web app development.
-
-## 📄 License
-
-Same license as the main fitness tracker project.
+MIT
 
 ---
 
-**Ready to sync your workouts? Build and run the app, then complete a Peloton or Tonal workout to see the magic happen!** ✨
+**Ready to sync your workouts? Build and run the app, then complete a workout to see the magic happen!** ✨
