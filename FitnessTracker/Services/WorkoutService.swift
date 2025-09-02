@@ -14,7 +14,7 @@ class WorkoutService: ObservableObject {
     @Published var lastSyncDate: Date?
     @Published var syncError: String?
     
-    private let baseURL = "https://fitness-tracker-carryologist.vercel.app/api"
+    private let baseURL = "https://fitness-tracker-one-sigma.vercel.app/api"
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -52,7 +52,7 @@ class WorkoutService: ObservableObject {
                     activity: workout.activity,
                     minutes: Int(workout.minutes),  // Convert to Int for API
                     miles: workout.miles,
-                    weight: workout.weight,  // Now using 'weight' field
+                    weightLifted: workout.weight,  // Use weightLifted field name
                     calories: workout.calories
                 )
             }
@@ -133,7 +133,7 @@ struct WorkoutPayload: Codable {
     let activity: String
     let minutes: Int
     let miles: Double?
-    let weight: Double?  // Changed from weightLifted
+    let weightLifted: Double?  // Changed from weight
     let calories: Double?
 }
 

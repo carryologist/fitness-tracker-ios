@@ -18,6 +18,24 @@ struct ContentView: View {
     @State private var showingSyncAlert = false
     
     var body: some View {
+        TabView {
+            // Dashboard Tab
+            DashboardView()
+                .tabItem {
+                    Image(systemName: "chart.bar.fill")
+                    Text("Dashboard")
+                }
+            
+            // Sync Tab
+            syncView
+                .tabItem {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("Sync")
+                }
+        }
+    }
+    
+    private var syncView: some View {
         NavigationView {
             VStack {
                 // Sync Status Card
